@@ -58,6 +58,7 @@
     "@adonisjs/lucid": "^21.8.1",
     "@adonisjs/session": "^7.5.1",
     "@vinejs/vine": "^3.0.1",
+    "adonis-autoswagger": "^3.73.0",
     "adonis-lucid-soft-deletes": "^2.1.0",
     "luxon": "^3.7.2",
     "pg": "^8.16.3",
