@@ -27,6 +27,18 @@ export default class MakeCrud extends BaseCommand {
     },
   ] as unknown as Argument[]
 
+  // Generate files
+  private write = (path: string, content: string) => {
+    const dir = dirname(path)
+    try {
+      mkdirSync(dir, { recursive: true })
+    } catch (e) {
+      // ignore
+    }
+    writeFileSync(path, content)
+    this.logger.success(`created ${path}`)
+  }
+
   async run() {
     const tableName = (this as any).tableName || this.parsed.args[0]
     const modelName = (this as any).modelName || this.parsed.args[1]
@@ -49,71 +61,36 @@ export default class MakeCrud extends BaseCommand {
     const columns = this.extractColumnsFromMigration(migrationFile)
     this.logger.info(`Found columns: ${columns.map((c) => c.name).join(', ')}`)
 
-    // Generate files
-    const write = (path: string, content: string) => {
-      const dir = dirname(path)
-      try {
-        mkdirSync(dir, { recursive: true })
-      } catch (e) {
-        // ignore
-      }
-      writeFileSync(path, content)
-      this.logger.success(`created ${path}`)
-    }
-
     const lower = tableName.toLowerCase()
     const plural = lower.endsWith('s') ? lower : lower + 's'
 
     // Generate Model with properties from migration
-    write(`app/models/${modelName?.toLowerCase()}.ts`, this.generateModel(modelName, columns))
+    this.write(`app/models/${modelName?.toLowerCase()}.ts`, this.generateModel(modelName, columns))
 
     // Generate Controller
     const controllerFileName: any = `${modelName.toLowerCase().replace(/ /g, '_')}_controller.ts`
     const controllerFilePath = `app/controllers/${controllerFileName}`
-
-    // Generate Service
-    write(
-      `app/services/${modelName.toLowerCase()}_service.ts`,
-      this.generateService(modelName, plural)
-    )
-
     try {
-      write(controllerFilePath, this.generateController(modelName, plural))
+      this.write(controllerFilePath, this.generateController(modelName, plural))
     } catch (error) {
       this.logger.error(`Failed to create ${controllerFileName}: ${error}`)
       return
     }
 
+    // Generate Service
+    this.write(
+      `app/services/${modelName.toLowerCase()}_service.ts`,
+      this.generateService(modelName, plural)
+    )
+
     // Generate Validator
-    write(
+    this.write(
       `app/validators/${modelName?.toLowerCase()}_validator.ts`,
       this.generateValidator(modelName, columns)
     )
 
-    const importString = `\nconst ${this.capitalize(modelName)}Controller = () => import('#controllers/${modelName.toLowerCase()}_controller')\n`
-    const routeString = `// CRUD ${this.capitalize(modelName)}
-router
-  .group(() => {
-    router.get('/', [${this.capitalize(modelName)}Controller, 'index'])
-    router.get('/:id', [${this.capitalize(modelName)}Controller, 'show'])
-    router.post('/', [${this.capitalize(modelName)}Controller, 'store'])
-    router.put('/:id', [${this.capitalize(modelName)}Controller, 'update'])
-    router.delete('/:id', [${this.capitalize(modelName)}Controller, 'destroy'])
-  })
-  .prefix('${plural}')`
-
-    const routesPath = 'start/routes.ts'
-    let oldRoutes = readFileSync(routesPath, 'utf-8')
-    const lastImportIndex = oldRoutes.lastIndexOf('import')
-    if (lastImportIndex !== -1) {
-      // cari baris enter setelah import terakhir
-      const nextLineIndex = oldRoutes.indexOf('\n', lastImportIndex) + 1
-      oldRoutes = oldRoutes.slice(0, nextLineIndex) + importString + oldRoutes.slice(nextLineIndex)
-    }
-    // lalu tambahkan route di akhir file
-    write(routesPath, oldRoutes + routeString)
-
-    this.logger.success(`create route for ${this.capitalize(modelName)} generated successfully!`)
+    // Generate Routes
+    this.updateRoutesFile(modelName, plural)
 
     this.logger.success(`CRUD ${this.capitalize(modelName)} generated successfully!`)
   }
@@ -355,6 +332,77 @@ export default class ${this.capitalize(modelName)}Service {
   }
 }
 `
+  }
+  /**
+   * Generate Ruutes
+   */
+  private generateRoutes(modelName: string, plural: string): string {
+    return `
+// CRUD ${this.capitalize(modelName)}
+router
+  .group(() => {
+    router.get('/', [${this.capitalize(modelName)}Controller, 'index'])
+    router.get('/:id', [${this.capitalize(modelName)}Controller, 'show'])
+    router.post('/', [${this.capitalize(modelName)}Controller, 'store'])
+    router.put('/:id', [${this.capitalize(modelName)}Controller, 'update'])
+    router.delete('/:id', [${this.capitalize(modelName)}Controller, 'destroy'])
+  })
+  .prefix('${plural}')
+`
+  }
+
+  private updateRoutesFile(modelName: string, plural: string) {
+    const routesPath = 'start/routes.ts'
+    let content = readFileSync(routesPath, 'utf-8')
+
+    const controllerName = this.capitalize(modelName) + 'Controller'
+    const importString = `const ${controllerName} = () => import('#controllers/${modelName.toLowerCase()}_controller')\n`
+
+    // tambahkan import jika belum ada
+    if (!content.includes(controllerName)) {
+      const lastImportIndex = content.lastIndexOf('import ')
+      const insertPos = lastImportIndex !== -1 ? content.indexOf('\n', lastImportIndex) + 1 : 0
+      content = content.slice(0, insertPos) + importString + content.slice(insertPos)
+    }
+
+    // generate route block
+    const routeBlock = `  // CRUD ${this.capitalize(modelName)}
+  router
+    .group(() => {
+      router.get('/', [${controllerName}, 'index'])
+      router.get('/:id', [${controllerName}, 'show'])
+      router.post('/', [${controllerName}, 'store'])
+      router.put('/:id', [${controllerName}, 'update'])
+      router.delete('/:id', [${controllerName}, 'destroy'])
+    })
+    .prefix('${plural}')\n`
+
+    // cari parent api/v1
+    const apiGroupRegex = /(router\.group\(\(\) => \{)([\s\S]*?)(\}\)\.prefix\('api\/v1'\))/m
+    const match = content.match(apiGroupRegex)
+
+    if (match) {
+      const innerContent = match[2]
+
+      // cek apakah prefix ini sudah ada
+      if (!innerContent.includes(`.prefix('${plural}')`)) {
+        const newInner = innerContent + '\n' + routeBlock
+        content = content.replace(innerContent, newInner)
+      } else {
+        this.logger.info(`Route '${plural}' already exists in api/v1. Skipped.`)
+      }
+    } else {
+      // jika tidak ada parent, buat baru di akhir file
+      const apiBlock = `
+router.group(() => {
+${routeBlock}
+}).prefix('api/v1')
+`
+      content += apiBlock
+    }
+
+    this.write(routesPath, content)
+    this.logger.success(`Route for ${this.capitalize(modelName)} generated successfully!`)
   }
 
   private generateRules(columns: any[], isUpdate: boolean): string {

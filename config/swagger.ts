@@ -6,10 +6,10 @@ export default {
   title: 'API DOCUMENTATION', // use info instead
   version: '1.0.0', // use info instead
   description: '', // use info instead
-  tagIndex: 2,
+  tagIndex: 3,
   productionEnv: 'production', // optional
   info: {
-    title: 'title',
+    title: 'API DOCUMENTATION',
     version: '1.0.0',
     description: '',
   },
@@ -26,5 +26,5 @@ export default {
   authMiddlewares: ['auth', 'auth:api'], // optional
   defaultSecurityScheme: 'BearerAuth', // optional
   persistAuthorization: true, // persist authorization between reloads on the swagger page
-  showFullPath: false, // the path displayed after endpoint summary
+  showFullPath: true, // the path displayed after endpoint summary
 }
